@@ -1,0 +1,175 @@
+name: Build MetaCubeXD Server
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "MetaCubeXD branch/tag/commit"
+        required: true
+        default: "main"
+
+  schedule:
+    # 每周一凌晨自动构建一次，可删除
+    - cron: "0 2 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  build-ui:
+    name: Build UI
+    runs-on: ubuntu-latest
+
+    env:
+      HUSKY: "0"
+      NODE_OPTIONS: "--max-old-space-size=5120"
+
+    steps:
+      - name: Checkout MetaCubeXD
+        uses: actions/checkout@v4
+        with:
+          repository: MetaCubeX/metacubexd
+          ref: ${{ inputs.ref || 'main' }}
+          path: metacubexd
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable pnpm
+        working-directory: metacubexd
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.34.1 --activate
+          pnpm --version
+
+      - name: Install dependencies
+        working-directory: metacubexd
+        run: |
+          pnpm install --frozen-lockfile
+
+      - name: Build UI
+        working-directory: metacubexd
+        run: |
+          pnpm build:ui
+
+      - name: Verify UI
+        run: |
+          test -f metacubexd/packages/ui/.output/public/index.html
+          du -sh metacubexd/packages/ui/.output/public
+
+      - name: Upload UI
+        uses: actions/upload-artifact@v4
+        with:
+          name: metacubexd-ui
+          path: metacubexd/packages/ui/.output/public/
+          if-no-files-found: error
+          retention-days: 7
+
+
+  build-server:
+    name: Build Server
+    runs-on: ubuntu-latest
+
+    env:
+      HUSKY: "0"
+      NODE_OPTIONS: "--max-old-space-size=4096"
+
+    steps:
+      - name: Checkout MetaCubeXD
+        uses: actions/checkout@v4
+        with:
+          repository: MetaCubeX/metacubexd
+          ref: ${{ inputs.ref || 'main' }}
+          path: metacubexd
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable pnpm
+        working-directory: metacubexd
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.34.1 --activate
+          pnpm --version
+
+      - name: Install dependencies
+        working-directory: metacubexd
+        run: |
+          pnpm install --frozen-lockfile
+
+      - name: Build Server
+        working-directory: metacubexd
+        run: |
+          pnpm build:server
+
+      - name: Verify Server
+        run: |
+          test -f metacubexd/apps/server/.output/server/index.mjs
+          du -sh metacubexd/apps/server/.output
+
+      - name: Upload Server
+        uses: actions/upload-artifact@v4
+        with:
+          name: metacubexd-server
+          path: metacubexd/apps/server/.output/
+          if-no-files-found: error
+          retention-days: 7
+
+
+  package:
+    name: Package Runtime
+    runs-on: ubuntu-latest
+
+    needs:
+      - build-ui
+      - build-server
+
+    steps:
+      - name: Download UI
+        uses: actions/download-artifact@v4
+        with:
+          name: metacubexd-ui
+          path: runtime/ui-dist
+
+      - name: Download Server
+        uses: actions/download-artifact@v4
+        with:
+          name: metacubexd-server
+          path: runtime/server
+
+      - name: Verify Runtime
+        run: |
+          echo "Runtime structure:"
+          find runtime -maxdepth 3 -type f | head -50
+
+          test -f runtime/ui-dist/index.html
+          test -f runtime/server/server/index.mjs
+
+      - name: Create archive
+        run: |
+          tar \
+            --owner=0 \
+            --group=0 \
+            -C runtime \
+            -czf metacubexd-runtime.tar.gz .
+
+          sha256sum metacubexd-runtime.tar.gz \
+            > metacubexd-runtime.tar.gz.sha256
+
+          ls -lh \
+            metacubexd-runtime.tar.gz \
+            metacubexd-runtime.tar.gz.sha256
+
+      - name: Upload Runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: metacubexd-runtime
+          path: |
+            metacubexd-runtime.tar.gz
+            metacubexd-runtime.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30

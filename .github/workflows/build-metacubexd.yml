@@ -1,48 +1,91 @@
-name: Build MetaCubeXD Server
+name: Build MetaCubeXD Runtime
 
 on:
   workflow_dispatch:
     inputs:
+      repository:
+        description: "MetaCubeXD source repository"
+        required: true
+        default: "MetaCubeX/metacubexd"
+
       ref:
-        description: "MetaCubeXD branch/tag/commit"
+        description: "Branch / Tag / Commit SHA"
         required: true
         default: "main"
-
-  schedule:
-    # 每周一凌晨自动构建一次，可删除
-    - cron: "0 2 * * 1"
 
 permissions:
   contents: read
 
+env:
+  NODE_VERSION: "22"
+  PNPM_VERSION: "10.34.1"
+
+
+# ============================================================
+# Build UI
+# ============================================================
 jobs:
   build-ui:
     name: Build UI
     runs-on: ubuntu-latest
 
     env:
-      HUSKY: "0"
       NODE_OPTIONS: "--max-old-space-size=5120"
+      HUSKY: "0"
 
     steps:
-      - name: Checkout MetaCubeXD
-        uses: actions/checkout@v4
+      - name: Checkout MetaCubeXD source
+        uses: actions/checkout@v7
         with:
-          repository: MetaCubeX/metacubexd
-          ref: ${{ inputs.ref || 'main' }}
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.ref }}
           path: metacubexd
+          fetch-depth: 1
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Enable pnpm
+      - name: Show source information
         working-directory: metacubexd
         run: |
-          corepack enable
-          corepack prepare pnpm@10.34.1 --activate
+          echo "========================================"
+          echo "Repository : ${{ inputs.repository }}"
+          echo "Ref        : ${{ inputs.ref }}"
+          echo "========================================"
+
+          git remote -v
+          git log -1 --oneline
+
+          echo
+          echo "package.json:"
+          cat package.json
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
+          cache-dependency-path: metacubexd/pnpm-lock.yaml
+
+      - name: Show build environment
+        run: |
+          echo "Node:"
+          node --version
+
+          echo
+          echo "pnpm:"
           pnpm --version
+
+          echo
+          echo "Memory:"
+          free -h
+
+          echo
+          echo "CPU:"
+          nproc
 
       - name: Install dependencies
         working-directory: metacubexd
@@ -52,49 +95,121 @@ jobs:
       - name: Build UI
         working-directory: metacubexd
         run: |
+          echo "Building MetaCubeXD UI..."
           pnpm build:ui
 
-      - name: Verify UI
+      - name: Verify UI output
         run: |
-          test -f metacubexd/packages/ui/.output/public/index.html
+          echo "========================================"
+          echo "UI build result"
+          echo "========================================"
+
+          ls -lah metacubexd/packages/ui/.output/
+          ls -lah metacubexd/packages/ui/.output/public/
+
+          test -f \
+            metacubexd/packages/ui/.output/public/index.html
+
+          echo
+          echo "UI size:"
           du -sh metacubexd/packages/ui/.output/public
 
-      - name: Upload UI
-        uses: actions/upload-artifact@v4
+          echo
+          echo "UI file count:"
+          find metacubexd/packages/ui/.output/public \
+            -type f | wc -l
+
+      # 不直接 upload .output
+      # 避免 hidden directory 被 upload-artifact 忽略
+      - name: Prepare UI artifact
+        run: |
+          mkdir -p artifact/ui-dist
+
+          cp -a \
+            metacubexd/packages/ui/.output/public/. \
+            artifact/ui-dist/
+
+          echo "========================================"
+          echo "Prepared UI artifact"
+          echo "========================================"
+
+          ls -lah artifact/ui-dist
+
+          test -f artifact/ui-dist/index.html
+
+          du -sh artifact/ui-dist
+
+      - name: Upload UI artifact
+        uses: actions/upload-artifact@v7
         with:
           name: metacubexd-ui
-          path: metacubexd/packages/ui/.output/public/
+          path: artifact/ui-dist/
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
+          compression-level: 6
 
 
+# ============================================================
+# Build Server
+# ============================================================
   build-server:
     name: Build Server
     runs-on: ubuntu-latest
 
     env:
-      HUSKY: "0"
       NODE_OPTIONS: "--max-old-space-size=4096"
+      HUSKY: "0"
 
     steps:
-      - name: Checkout MetaCubeXD
-        uses: actions/checkout@v4
+      - name: Checkout MetaCubeXD source
+        uses: actions/checkout@v7
         with:
-          repository: MetaCubeX/metacubexd
-          ref: ${{ inputs.ref || 'main' }}
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.ref }}
           path: metacubexd
+          fetch-depth: 1
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Enable pnpm
+      - name: Show source information
         working-directory: metacubexd
         run: |
-          corepack enable
-          corepack prepare pnpm@10.34.1 --activate
+          echo "========================================"
+          echo "Repository : ${{ inputs.repository }}"
+          echo "Ref        : ${{ inputs.ref }}"
+          echo "========================================"
+
+          git remote -v
+          git log -1 --oneline
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
+          cache-dependency-path: metacubexd/pnpm-lock.yaml
+
+      - name: Show build environment
+        run: |
+          echo "Node:"
+          node --version
+
+          echo
+          echo "pnpm:"
           pnpm --version
+
+          echo
+          echo "Memory:"
+          free -h
+
+          echo
+          echo "CPU:"
+          nproc
 
       - name: Install dependencies
         working-directory: metacubexd
@@ -104,22 +219,78 @@ jobs:
       - name: Build Server
         working-directory: metacubexd
         run: |
+          echo "Building MetaCubeXD Server..."
           pnpm build:server
 
-      - name: Verify Server
+      - name: Verify Server output
         run: |
-          test -f metacubexd/apps/server/.output/server/index.mjs
+          echo "========================================"
+          echo "Server build result"
+          echo "========================================"
+
+          ls -lah metacubexd/apps/server/
+
+          if [ ! -d metacubexd/apps/server/.output ]; then
+            echo "ERROR: apps/server/.output does not exist"
+            exit 1
+          fi
+
+          ls -lah metacubexd/apps/server/.output/
+
+          echo
+          echo "Looking for index.mjs:"
+          find metacubexd/apps/server/.output \
+            -name 'index.mjs' \
+            -type f \
+            -print
+
+          test -f \
+            metacubexd/apps/server/.output/server/index.mjs
+
+          echo
+          echo "Server size:"
           du -sh metacubexd/apps/server/.output
 
-      - name: Upload Server
-        uses: actions/upload-artifact@v4
+          echo
+          echo "Server file count:"
+          find metacubexd/apps/server/.output \
+            -type f | wc -l
+
+      # 先把隐藏的 .output 内容复制到普通目录
+      - name: Prepare Server artifact
+        run: |
+          mkdir -p artifact/server
+
+          cp -a \
+            metacubexd/apps/server/.output/. \
+            artifact/server/
+
+          echo "========================================"
+          echo "Prepared Server artifact"
+          echo "========================================"
+
+          ls -lah artifact/server
+          ls -lah artifact/server/server
+
+          test -f \
+            artifact/server/server/index.mjs
+
+          du -sh artifact/server
+
+      - name: Upload Server artifact
+        uses: actions/upload-artifact@v7
         with:
           name: metacubexd-server
-          path: metacubexd/apps/server/.output/
+          path: artifact/server/
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
+          compression-level: 6
 
 
+# ============================================================
+# Package
+# ============================================================
   package:
     name: Package Runtime
     runs-on: ubuntu-latest
@@ -129,43 +300,103 @@ jobs:
       - build-server
 
     steps:
-      - name: Download UI
-        uses: actions/download-artifact@v4
+      - name: Download UI artifact
+        uses: actions/download-artifact@v7
         with:
           name: metacubexd-ui
           path: runtime/ui-dist
 
-      - name: Download Server
-        uses: actions/download-artifact@v4
+      - name: Download Server artifact
+        uses: actions/download-artifact@v7
         with:
           name: metacubexd-server
           path: runtime/server
 
-      - name: Verify Runtime
+      - name: Verify complete runtime
         run: |
-          echo "Runtime structure:"
-          find runtime -maxdepth 3 -type f | head -50
+          echo "========================================"
+          echo "Runtime directory"
+          echo "========================================"
 
-          test -f runtime/ui-dist/index.html
-          test -f runtime/server/server/index.mjs
+          find runtime \
+            -maxdepth 3 \
+            -type f \
+            | head -100
 
-      - name: Create archive
+          echo
+          echo "Checking UI..."
+
+          test -f \
+            runtime/ui-dist/index.html
+
+          echo "UI OK"
+
+          echo
+          echo "Checking Server..."
+
+          test -f \
+            runtime/server/server/index.mjs
+
+          echo "Server OK"
+
+          echo
+          echo "Sizes:"
+
+          du -sh runtime/ui-dist
+          du -sh runtime/server
+          du -sh runtime
+
+      - name: Write build information
         run: |
+          cat > runtime/BUILD_INFO <<EOF
+          Repository=${{ inputs.repository }}
+          Ref=${{ inputs.ref }}
+          Node=${{ env.NODE_VERSION }}
+          pnpm=${{ env.PNPM_VERSION }}
+          BuildDate=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          GitHubRun=${{ github.run_id }}
+          EOF
+
+          cat runtime/BUILD_INFO
+
+      - name: Create runtime archive
+        run: |
+          echo "Creating tar.gz..."
+
           tar \
             --owner=0 \
             --group=0 \
+            --numeric-owner \
             -C runtime \
-            -czf metacubexd-runtime.tar.gz .
+            -czf metacubexd-runtime.tar.gz \
+            .
 
-          sha256sum metacubexd-runtime.tar.gz \
+          sha256sum \
+            metacubexd-runtime.tar.gz \
             > metacubexd-runtime.tar.gz.sha256
+
+          echo
+          echo "========================================"
+          echo "Final files"
+          echo "========================================"
 
           ls -lh \
             metacubexd-runtime.tar.gz \
             metacubexd-runtime.tar.gz.sha256
 
-      - name: Upload Runtime
-        uses: actions/upload-artifact@v4
+          echo
+          echo "SHA256:"
+
+          cat metacubexd-runtime.tar.gz.sha256
+
+          echo
+          echo "Archive contents:"
+
+          tar tzf metacubexd-runtime.tar.gz \
+            | head -100
+
+      - name: Upload final runtime
+        uses: actions/upload-artifact@v7
         with:
           name: metacubexd-runtime
           path: |
@@ -173,3 +404,4 @@ jobs:
             metacubexd-runtime.tar.gz.sha256
           if-no-files-found: error
           retention-days: 30
+          compression-level: 0

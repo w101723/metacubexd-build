@@ -295,6 +295,13 @@ jobs:
     name: Package Runtime
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write
+
+    concurrency:
+      group: metacubexd-latest-release
+      cancel-in-progress: false
+
     needs:
       - build-ui
       - build-server
@@ -405,3 +412,48 @@ jobs:
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
+
+      - name: Publish latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REPOSITORY: ${{ inputs.repository }}
+          SOURCE_REF: ${{ inputs.ref }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          release_tag="latest"
+          release_title="MetaCubeXD Runtime — latest"
+
+          release_notes="$(printf '%s\n' \
+            'Automated MetaCubeXD runtime build.' \
+            '' \
+            "Source repository: ${SOURCE_REPOSITORY}" \
+            "Source ref: ${SOURCE_REF}" \
+            "Workflow run: ${RUN_URL}")"
+
+          if gh release view "${release_tag}" >/dev/null 2>&1; then
+            gh release edit "${release_tag}" \
+              --title "${release_title}" \
+              --notes "${release_notes}"
+          else
+            gh release create "${release_tag}" \
+              --target "${GITHUB_SHA}" \
+              --title "${release_title}" \
+              --notes "${release_notes}"
+          fi
+
+          gh release upload "${release_tag}" \
+            metacubexd-runtime.tar.gz \
+            metacubexd-runtime.tar.gz.sha256 \
+            --clobber
+
+          release_url="$(gh release view "${release_tag}" --json url --jq '.url')"
+
+          {
+            echo "## Published Release"
+            echo
+            echo "- Release: [${release_tag}](${release_url})"
+            echo "- Source repository: \`${SOURCE_REPOSITORY}\`"
+            echo "- Source ref: \`${SOURCE_REF}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
